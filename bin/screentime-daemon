@@ -92,9 +92,9 @@ def list_user_sessions(username: str) -> List[str]:
     sessions = []
     for line in out.splitlines():
         parts = line.split()
-        if len(parts) < 2:
+        if len(parts) < 3:
             continue
-        session_id, user = parts[0], parts[1]
+        session_id, user = parts[0], parts[2]
         if user == username:
             sessions.append(session_id)
     return sessions
