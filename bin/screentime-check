@@ -95,7 +95,7 @@ def main() -> int:
             "Daily screen time limit reached. "
             "Login not allowed until after {reset}."
         ).format(reset=reset_time.strftime("%H:%M"))
-        print(msg, file=sys.stderr)
+        print(msg)
         return 1
 
     return 0

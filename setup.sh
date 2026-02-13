@@ -46,7 +46,7 @@ backup_file() {
 
 append_pam_exec() {
   local pam_file="$1"
-  local line="account required pam_exec.so /usr/local/bin/screentime-check"
+  local line="account required pam_exec.so stdout /usr/local/bin/screentime-check"
   if $SUDO grep -q "screentime-check" "$pam_file"; then
     return
   fi
