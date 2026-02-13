@@ -177,7 +177,7 @@ def main() -> int:
     limit_minutes = limit_for_day(cfg, day_key)
     remaining = limit_minutes - used_minutes
 
-    if remaining == WARNING_MINUTES and not warned:
+    if remaining <= WARNING_MINUTES and remaining > 0 and not warned:
         notify_user(username, "10 minutes left on today's screen time")
         warned = True
 
