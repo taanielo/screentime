@@ -170,7 +170,9 @@ def main() -> int:
             elif delta_minutes > MAX_CATCHUP_MINUTES:
                 delta_minutes = MAX_CATCHUP_MINUTES
         used_minutes += delta_minutes
-    state["last_tick"] = now.isoformat(timespec="seconds")
+        state["last_tick"] = now.isoformat(timespec="seconds")
+    else:
+        state["last_tick"] = None
 
     limit_minutes = limit_for_day(cfg, day_key)
     remaining = limit_minutes - used_minutes
