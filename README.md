@@ -32,6 +32,26 @@ systemctl status screentime.timer
 - `systemd/screentime.service` and `systemd/screentime.timer`
 - `etc/screentime.conf.template`
 
+## Updating an existing install
+
+1. Pull the latest changes:
+
+```bash
+git pull
+```
+
+2. Re-run the installer to refresh binaries and units:
+
+```bash
+./setup.sh
+```
+
+3. Restart the service if it is currently active:
+
+```bash
+sudo systemctl restart screentime.timer
+```
+
 ## Notes
 
 - Notification uses `notify-send` on the user session bus.
