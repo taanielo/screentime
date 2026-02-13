@@ -48,6 +48,11 @@ append_pam_exec() {
   local pam_file="$1"
   local line="account required pam_exec.so stdout /usr/local/bin/screentime-check"
   if $SUDO grep -q "screentime-check" "$pam_file"; then
+    if $SUDO grep -q "pam_exec.so stdout /usr/local/bin/screentime-check" "$pam_file"; then
+      return
+    fi
+    backup_file "$pam_file"
+    $SUDO sed -i "s|^account[[:space:]]\\+required[[:space:]]\\+pam_exec\\.so[[:space:]]\\+/usr/local/bin/screentime-check$|$line|" "$pam_file"
     return
   fi
   backup_file "$pam_file"
