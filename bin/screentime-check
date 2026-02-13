@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+import configparser
+import datetime as dt
+import json
+import os
+import sys
+
+CONFIG_PATH = "/etc/screentime.conf"
+STATE_DIR = "/var/lib/screentime"
+WEEKDAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+
+def load_config() -> configparser.ConfigParser:
+    cfg = configparser.ConfigParser()
+    if not os.path.exists(CONFIG_PATH):
+        return cfg
+    cfg.read(CONFIG_PATH)
+    return cfg
+
+
+def get_reset_time(cfg: configparser.ConfigParser) -> dt.time:
+    val = cfg.get("reset", "time", fallback="06:00").strip()
+    try:
+        hh, mm = val.split(":", 1)
+        return dt.time(int(hh), int(mm))
+    except Exception:
+        return dt.time(6, 0)
+
+
+def usage_day_key(now: dt.datetime, reset_time: dt.time) -> str:
+    reset_today = now.replace(hour=reset_time.hour, minute=reset_time.minute, second=0, microsecond=0)
+    if now < reset_today:
+        day = (now - dt.timedelta(days=1)).date()
+    else:
+        day = now.date()
+    return day.isoformat()
+
+
+def limit_for_day(cfg: configparser.ConfigParser, day_key: str) -> int:
+    try:
+        day = dt.date.fromisoformat(day_key)
+    except Exception:
+        return 0
+    weekday = WEEKDAY_KEYS[day.weekday()]
+    try:
+        return int(cfg.get("limits", weekday, fallback="0").strip())
+    except Exception:
+        return 0
+
+
+def state_path(username: str) -> str:
+    return os.path.join(STATE_DIR, f"{username}.json")
+
+
+def load_used_minutes(path: str, day_key: str) -> int:
+    if not os.path.exists(path):
+        return 0
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if data.get("day_key") != day_key:
+            return 0
+        return int(data.get("used_minutes", 0))
+    except Exception:
+        return 0
+
+
+def get_username() -> str:
+    if len(sys.argv) > 1 and sys.argv[1].strip():
+        return sys.argv[1].strip()
+    env_user = os.environ.get("PAM_USER", "").strip()
+    return env_user
+
+
+def main() -> int:
+    username = get_username()
+    if not username:
+        return 0
+
+    cfg = load_config()
+    target = cfg.get("user", "name", fallback="").strip()
+    if not target or target != username:
+        return 0
+
+    now = dt.datetime.now()
+    reset_time = get_reset_time(cfg)
+    day_key = usage_day_key(now, reset_time)
+
+    limit_minutes = limit_for_day(cfg, day_key)
+    used_minutes = load_used_minutes(state_path(username), day_key)
+    remaining = limit_minutes - used_minutes
+
+    if remaining <= 0:
+        msg = (
+            "Daily screen time limit reached. "
+            "Login not allowed until after {reset}."
+        ).format(reset=reset_time.strftime("%H:%M"))
+        print(msg, file=sys.stderr)
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

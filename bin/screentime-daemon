@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+import configparser
+import datetime as dt
+import json
+import os
+import pwd
+import subprocess
+import sys
+from typing import Dict, List, Optional, Tuple
+
+CONFIG_PATH = "/etc/screentime.conf"
+STATE_DIR = "/var/lib/screentime"
+WARNING_MINUTES = 10
+MAX_CATCHUP_MINUTES = 2
+
+WEEKDAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+
+def log(msg: str) -> None:
+    print(msg, file=sys.stderr)
+
+
+def run(cmd: List[str]) -> Tuple[int, str, str]:
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    out, err = p.communicate()
+    return p.returncode, out.strip(), err.strip()
+
+
+def load_config() -> configparser.ConfigParser:
+    cfg = configparser.ConfigParser()
+    if not os.path.exists(CONFIG_PATH):
+        raise FileNotFoundError(f"missing {CONFIG_PATH}")
+    cfg.read(CONFIG_PATH)
+    return cfg
+
+
+def get_reset_time(cfg: configparser.ConfigParser) -> dt.time:
+    val = cfg.get("reset", "time", fallback="06:00").strip()
+    try:
+        hh, mm = val.split(":", 1)
+        return dt.time(int(hh), int(mm))
+    except Exception:
+        log(f"invalid reset time '{val}', using 06:00")
+        return dt.time(6, 0)
+
+
+def usage_day_key(now: dt.datetime, reset_time: dt.time) -> str:
+    reset_today = now.replace(hour=reset_time.hour, minute=reset_time.minute, second=0, microsecond=0)
+    if now < reset_today:
+        day = (now - dt.timedelta(days=1)).date()
+    else:
+        day = now.date()
+    return day.isoformat()
+
+
+def limit_for_day(cfg: configparser.ConfigParser, day_key: str) -> int:
+    day = dt.date.fromisoformat(day_key)
+    weekday = WEEKDAY_KEYS[day.weekday()]
+    try:
+        return int(cfg.get("limits", weekday, fallback="0").strip())
+    except Exception:
+        return 0
+
+
+def state_path(username: str) -> str:
+    return os.path.join(STATE_DIR, f"{username}.json")
+
+
+def load_state(path: str) -> Dict:
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_state(path: str, state: Dict) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f)
+    os.replace(tmp, path)
+
+
+def list_user_sessions(username: str) -> List[str]:
+    code, out, err = run(["loginctl", "list-sessions", "--no-legend"])
+    if code != 0:
+        log(f"loginctl failed: {err}")
+        return []
+    sessions = []
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        session_id, user = parts[0], parts[1]
+        if user == username:
+            sessions.append(session_id)
+    return sessions
+
+
+def notify_user(username: str, message: str) -> None:
+    try:
+        uid = pwd.getpwnam(username).pw_uid
+    except KeyError:
+        log(f"unknown user {username}")
+        return
+
+    env = os.environ.copy()
+    env["XDG_RUNTIME_DIR"] = f"/run/user/{uid}"
+    env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path=/run/user/{uid}/bus"
+
+    cmd = ["runuser", "-u", username, "--", "notify-send", message]
+    subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def terminate_sessions(session_ids: List[str]) -> None:
+    for sid in session_ids:
+        run(["loginctl", "terminate-session", sid])
+
+
+def parse_last_tick(state: Dict) -> Optional[dt.datetime]:
+    raw = state.get("last_tick")
+    if not raw:
+        return None
+    try:
+        return dt.datetime.fromisoformat(raw)
+    except Exception:
+        return None
+
+
+def main() -> int:
+    try:
+        cfg = load_config()
+    except Exception as e:
+        log(str(e))
+        return 1
+
+    username = cfg.get("user", "name", fallback="").strip()
+    if not username:
+        log("missing [user] name in config")
+        return 1
+
+    now = dt.datetime.now()
+    reset_time = get_reset_time(cfg)
+    day_key = usage_day_key(now, reset_time)
+
+    st_path = state_path(username)
+    state = load_state(st_path)
+
+    if state.get("day_key") != day_key:
+        state = {"day_key": day_key, "used_minutes": 0, "warned_at_10": False}
+
+    used_minutes = int(state.get("used_minutes", 0))
+    warned = bool(state.get("warned_at_10", False))
+
+    sessions = list_user_sessions(username)
+    active = len(sessions) > 0
+
+    last_tick = parse_last_tick(state)
+    if active:
+        if last_tick is None:
+            delta_minutes = 1
+        else:
+            delta = now - last_tick
+            delta_minutes = int(delta.total_seconds() // 60)
+            if delta_minutes < 1:
+                delta_minutes = 0
+            elif delta_minutes > MAX_CATCHUP_MINUTES:
+                delta_minutes = MAX_CATCHUP_MINUTES
+        used_minutes += delta_minutes
+    state["last_tick"] = now.isoformat(timespec="seconds")
+
+    limit_minutes = limit_for_day(cfg, day_key)
+    remaining = limit_minutes - used_minutes
+
+    if remaining == WARNING_MINUTES and not warned:
+        notify_user(username, "10 minutes left on today's screen time")
+        warned = True
+
+    if remaining <= 0 and active:
+        terminate_sessions(sessions)
+
+    state["used_minutes"] = used_minutes
+    state["warned_at_10"] = warned
+
+    save_state(st_path, state)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

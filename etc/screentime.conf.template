@@ -1,0 +1,14 @@
+[user]
+name = yourusername
+
+[reset]
+time = 06:00
+
+[limits]
+mon = 120
+tue = 120
+wed = 120
+thu = 120
+fri = 120
+sat = 60
+sun = 60
